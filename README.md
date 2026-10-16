@@ -51,13 +51,18 @@ This repository is built following a test-driven, milestone-based engineering ap
   - [x] Low-Level Design & Concurrency Strategy ([`docs/LLD.md`](docs/LLD.md))
   - [x] PostgreSQL & Redis Data Schema ([`docs/SCHEMA.md`](docs/SCHEMA.md))
   - [x] RESTful API Specification ([`docs/API_SPEC.md`](docs/API_SPEC.md))
-- [ ] **Phase 1: Environment & Project Scaffolding**
-  - [ ] Spring Boot 3.3+ initialization with Java 21
-  - [ ] Multi-container `docker-compose.yml` (PostgreSQL 16 + Redis 7)
-  - [ ] Application configuration (`application.yml`) & profile setup
-- [ ] **Phase 2: Relational Domain Modeling & Realistic Seeding**
-  - [ ] JPA Entities: `Venue`, `Screen`, `Event`, `Show`, `Seat`, `ShowSeat`, `Booking`, `Ticket`
-  - [ ] Automated database seeder populating real-world arenas, concerts, and tiered seat matrices
+- [x] **Phase 1: Environment & Project Scaffolding**
+  - [x] Spring Boot 3.3+ initialization with Java 21
+  - [x] Multi-container `docker-compose.yml` (PostgreSQL 16 + Redis 7)
+  - [x] Application configuration (`application.yml`, `application-test.yml`) & profile setup
+  - [x] Automated GitHub Actions CI pipeline (`.github/workflows/ci.yml`)
+- [x] **Phase 2: Relational Domain Modeling & Realistic Seeding**
+  - [x] Domain-driven packaging architecture (`venue`, `event`, `show`, `seat`, `booking`)
+  - [x] JPA Entities: `Venue`, `Screen`, `Event`, `Show`, `Seat`, `ShowSeat`, `Booking`, `Ticket`
+  - [x] Concurrency safety: Optimistic locking (`@Version`) & database unique constraints
+  - [x] Spring Data Repositories with `JOIN FETCH` queries (eliminating N+1 query overhead)
+  - [x] Automated database seeder populating real-world arenas (Madison Square Garden), Coldplay concert, and 60 tiered seat matrices
+  - [x] Automated persistence & optimistic locking test suite passing cleanly
 - [ ] **Phase 3: High-Concurrency Seat Hold Engine (Redis + Redisson)**
   - [ ] Redisson client setup & distributed locking abstraction
   - [ ] Atomic multi-seat lock acquisition with lexicographical ordering (deadlock prevention)
@@ -92,14 +97,26 @@ This repository is built following a test-driven, milestone-based engineering ap
 
 ```
 ticketwave/
+├── .github/workflows/        # Automated CI pipeline with live Postgres & Redis services
 ├── docs/                     # Architectural design & specifications
 │   ├── PRD.md                # Product Requirements Document & Scope
 │   ├── LLD.md                # Low-Level Design & Concurrency Strategy
 │   ├── SCHEMA.md             # PostgreSQL Relational & Redis Key Schema
 │   └── API_SPEC.md           # REST API Specifications & Error Schemas
-├── src/                      # Spring Boot 3 Application source code
+├── src/
+│   ├── main/java/com/ticketwave/
+│   │   ├── venue/            # Venue, Screen, ScreenType, VenueRepository, ScreenRepository
+│   │   ├── event/            # Event, EventRepository
+│   │   ├── show/             # Show, ShowStatus, ShowRepository
+│   │   ├── seat/             # Seat, ShowSeat, SeatTier, SeatStatus, SeatRepository, ShowSeatRepository
+│   │   ├── booking/          # Booking, Ticket, BookingStatus, BookingRepository, TicketRepository
+│   │   ├── infrastructure/
+│   │   │   └── seeder/       # Realistic Database Seeder (MSG Arena & Coldplay Tour)
+│   │   └── TicketWaveApplication.java
+│   └── main/resources/
+│       └── application.yml   # High-concurrency HikariCP, JPA, Redis & Redisson configurations
 ├── docker-compose.yml        # PostgreSQL 16 & Redis 7 orchestration
-├── pom.xml                   # Maven dependencies & build configuration
+├── pom.xml                   # Maven dependencies & Java 21 build configuration
 └── README.md                 # Living engineering documentation
 ```
 
