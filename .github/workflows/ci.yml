@@ -1,0 +1,68 @@
+name: TicketWave CI Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    name: Build & Concurrency Test Suite
+    runs-on: ubuntu-latest
+
+    # ====================================================================
+    # Real Service Containers for CI (PostgreSQL 16 & Redis 7)
+    # ====================================================================
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ticketwave_db
+          POSTGRES_USER: ticketwave_user
+          POSTGRES_PASSWORD: ticketwave_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+        # Enable Redis Keyspace events for expired keys (Lease auto-expiration engine)
+        env:
+          REDIS_EXTRA_FLAGS: "--notify-keyspace-events Ex"
+
+    steps:
+      # Step 1: Checkout the source repository code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Java 21 LTS with Maven dependency caching
+      - name: Set up JDK 21 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Step 3: Compile and run test suite against live PostgreSQL and Redis services
+      - name: Run Maven Build & Tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: ticketwave_db
+          DB_USER: ticketwave_user
+          DB_PASS: ticketwave_pass
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: mvn -B clean verify

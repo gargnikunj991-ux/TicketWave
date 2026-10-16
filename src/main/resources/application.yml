@@ -1,0 +1,83 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: ticketwave
+
+  # ====================================================================
+  # Relational Database Configuration (PostgreSQL 16 + HikariCP)
+  # ====================================================================
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ticketwave_db}
+    username: ${DB_USER:ticketwave_user}
+    password: ${DB_PASS:ticketwave_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: TicketWaveHikariCP
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: public
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # ====================================================================
+  # Redis In-Memory Lease & Caching Engine (Redis 7)
+  # ====================================================================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3000ms
+
+# ====================================================================
+# Redisson Distributed Lock Engine Configuration
+# ====================================================================
+redisson:
+  singleServerConfig:
+    address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+    connectionPoolSize: 64
+    connectionMinimumIdleSize: 16
+    connectTimeout: 5000
+    timeout: 3000
+    retryAttempts: 3
+    retryInterval: 1500
+
+# ====================================================================
+# Production Actuator & Metrics Telemetry
+# ====================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: always
+
+# ====================================================================
+# Swagger UI / OpenAPI 3 Specification Endpoint
+# ====================================================================
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: method
