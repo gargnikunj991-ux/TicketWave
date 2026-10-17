@@ -63,10 +63,12 @@ This repository is built following a test-driven, milestone-based engineering ap
   - [x] Spring Data Repositories with `JOIN FETCH` queries (eliminating N+1 query overhead)
   - [x] Automated database seeder populating real-world arenas (Madison Square Garden), Coldplay concert, and 60 tiered seat matrices
   - [x] Automated persistence & optimistic locking test suite passing cleanly
-- [ ] **Phase 3: High-Concurrency Seat Hold Engine (Redis + Redisson)**
-  - [ ] Redisson client setup & distributed locking abstraction
-  - [ ] Atomic multi-seat lock acquisition with lexicographical ordering (deadlock prevention)
-  - [ ] 10-minute temporary seat hold with Redis TTL keys
+- [x] **Phase 3: High-Concurrency Seat Hold Engine (Redis + Redisson)**
+  - [x] Redisson client setup & distributed locking abstraction
+  - [x] Atomic multi-seat lock acquisition with lexicographical ordering (deadlock prevention)
+  - [x] 10-minute temporary seat hold with Redis TTL keys (`hold:show:{id}:seat:{id}`)
+  - [x] RFC-7807 Problem Details error handling with fast 409 conflict responses
+  - [x] RESTful API endpoints (`GET /seats`, `POST /hold`, `POST /release`) with 14 passing automated tests
 - [ ] **Phase 4: Transactional Checkout & Payment Idempotency Engine**
   - [ ] HTTP `Idempotency-Key` tracking filter & Redis cache
   - [ ] Simulated bank payment service with latency & failure simulation
@@ -105,20 +107,90 @@ ticketwave/
 │   └── API_SPEC.md           # REST API Specifications & Error Schemas
 ├── src/
 │   ├── main/java/com/ticketwave/
-│   │   ├── venue/            # Venue, Screen, ScreenType, VenueRepository, ScreenRepository
+│   │   ├── venue/            # Venue, Screen, ScreenType, Repositories
 │   │   ├── event/            # Event, EventRepository
 │   │   ├── show/             # Show, ShowStatus, ShowRepository
-│   │   ├── seat/             # Seat, ShowSeat, SeatTier, SeatStatus, SeatRepository, ShowSeatRepository
-│   │   ├── booking/          # Booking, Ticket, BookingStatus, BookingRepository, TicketRepository
+│   │   ├── seat/             # Seat, ShowSeat, SeatTier, SeatStatus, Repositories
+│   │   │   ├── dto/          # SeatMatrixResponse, SeatHoldRequest, SeatHoldResponse
+│   │   │   ├── SeatHoldService.java    # Redisson distributed locking & 10-min hold engine
+│   │   │   └── ShowSeatController.java # Real-time matrix, hold & release REST endpoints
+│   │   ├── booking/          # Booking, Ticket, BookingStatus, Repositories
 │   │   ├── infrastructure/
+│   │   │   ├── exception/    # RFC-7807 Problem Details Global Exception Handler
+│   │   │   ├── redis/        # Redis & Redisson configurations (StringRedisTemplate)
 │   │   │   └── seeder/       # Realistic Database Seeder (MSG Arena & Coldplay Tour)
 │   │   └── TicketWaveApplication.java
 │   └── main/resources/
 │       └── application.yml   # High-concurrency HikariCP, JPA, Redis & Redisson configurations
+├── src/test/java/com/ticketwave/
+│   ├── seat/
+│   │   ├── SeatHoldServiceTest.java     # Unit tests for distributed locking & fail-fast
+│   │   ├── ShowSeatControllerTest.java  # WebMvc tests for REST contracts & validations
+│   │   └── ShowSeatRepositoryTest.java  # Optimistic locking & persistence tests
+│   └── TicketWaveApplicationTests.java
 ├── docker-compose.yml        # PostgreSQL 16 & Redis 7 orchestration
 ├── pom.xml                   # Maven dependencies & Java 21 build configuration
 └── README.md                 # Living engineering documentation
 ```
+
+---
+
+## ⚡ API Showcase (Phase 3: High-Concurrency Seat Hold)
+
+### 1. View Real-Time Seat Matrix
+```bash
+curl -X GET http://localhost:8080/api/v1/shows/1/seats
+```
+
+### 2. Acquire a 10-Minute Temporary Seat Hold
+Acquires Redisson distributed locks, verifies availability, and leases the seats for 600 seconds:
+```bash
+curl -X POST http://localhost:8080/api/v1/shows/1/hold \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "usr_98124",
+    "seatIds": [1, 2]
+  }'
+```
+**Response (200 OK):**
+```json
+{
+  "holdReference": "a8098c1a-f86e-11da-bd1a-00112444be1e",
+  "showId": 1,
+  "userId": "usr_98124",
+  "seatIds": [1, 2],
+  "totalHoldAmount": 500.00,
+  "expiresAt": "2026-10-17T16:35:00Z",
+  "ttlSeconds": 600
+}
+```
+
+### 3. Voluntary Release of Held Seats
+```bash
+curl -X POST http://localhost:8080/api/v1/shows/1/release \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "usr_98124",
+    "holdReference": "a8098c1a-f86e-11da-bd1a-00112444be1e"
+  }'
+```
+
+---
+
+## 🧪 Test Suite & Concurrency Verification
+
+TicketWave is built strictly following Test-Driven Development (TDD). 
+
+```bash
+mvn test
+```
+* **Status:** `14 / 14 Tests Passing cleanly`
+* Covers:
+  - Deterministic natural ordering & circular-wait deadlock prevention
+  - Sub-millisecond fail-fast rejection on Redis conflicts (409)
+  - Lock timeout handling under high thread contention
+  - RFC-7807 Problem Details validation & error formatting
+  - `@Version` optimistic locking integrity
 
 ---
 
@@ -136,7 +208,7 @@ docker-compose up -d
 
 ### 2. Build & Run Application
 ```bash
-./mvnw clean spring-boot:run
+mvn clean spring-boot:run
 ```
 
 The API will be available at `http://localhost:8080`, with interactive Swagger UI at `http://localhost:8080/swagger-ui.html`.
