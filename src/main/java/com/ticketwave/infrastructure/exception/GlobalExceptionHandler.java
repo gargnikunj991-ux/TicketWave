@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -28,6 +29,45 @@ public class GlobalExceptionHandler {
                 .timestamp(Instant.now())
                 .build();
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<ErrorResponse> handleIdempotencyConflict(IdempotencyConflictException ex, HttpServletRequest request) {
+        log.warn("Idempotency conflict on [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse error = ErrorResponse.builder()
+                .title("Idempotency Conflict")
+                .status(HttpStatus.CONFLICT.value())
+                .detail(ex.getMessage())
+                .instance(request.getRequestURI())
+                .timestamp(Instant.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    @ExceptionHandler(SeatHoldExpiredException.class)
+    public ResponseEntity<ErrorResponse> handleSeatHoldExpired(SeatHoldExpiredException ex, HttpServletRequest request) {
+        log.warn("Seat hold expired on [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse error = ErrorResponse.builder()
+                .title("Seat Hold Expired")
+                .status(HttpStatus.GONE.value())
+                .detail(ex.getMessage())
+                .instance(request.getRequestURI())
+                .timestamp(Instant.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.GONE).body(error);
+    }
+
+    @ExceptionHandler(PaymentFailedException.class)
+    public ResponseEntity<ErrorResponse> handlePaymentFailed(PaymentFailedException ex, HttpServletRequest request) {
+        log.warn("Payment failed on [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse error = ErrorResponse.builder()
+                .title("Payment Failed")
+                .status(HttpStatus.PAYMENT_REQUIRED.value())
+                .detail(ex.getMessage())
+                .instance(request.getRequestURI())
+                .timestamp(Instant.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED).body(error);
     }
 
     @ExceptionHandler(LockAcquisitionException.class)
@@ -70,6 +110,19 @@ public class GlobalExceptionHandler {
                 .instance(request.getRequestURI())
                 .timestamp(Instant.now())
                 .errors(errors)
+                .build();
+        return ResponseEntity.badRequest().body(error);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ErrorResponse> handleMissingHeader(MissingRequestHeaderException ex, HttpServletRequest request) {
+        log.warn("Missing required header on [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse error = ErrorResponse.builder()
+                .title("Missing Required Header")
+                .status(HttpStatus.BAD_REQUEST.value())
+                .detail(ex.getMessage())
+                .instance(request.getRequestURI())
+                .timestamp(Instant.now())
                 .build();
         return ResponseEntity.badRequest().body(error);
     }

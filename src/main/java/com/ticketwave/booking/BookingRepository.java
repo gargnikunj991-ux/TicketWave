@@ -15,7 +15,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     Optional<Booking> findByIdempotencyKey(String idempotencyKey);
 
-    @Query("SELECT b FROM Booking b LEFT JOIN FETCH b.tickets WHERE b.bookingReference = :ref")
+    @Query("SELECT b FROM Booking b JOIN FETCH b.show LEFT JOIN FETCH b.tickets t LEFT JOIN FETCH t.seat WHERE b.bookingReference = :ref")
     Optional<Booking> findByBookingReferenceWithTickets(@Param("ref") String bookingReference);
 
     List<Booking> findByUserIdOrderByCreatedAtDesc(String userId);

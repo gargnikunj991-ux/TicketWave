@@ -69,10 +69,12 @@ This repository is built following a test-driven, milestone-based engineering ap
   - [x] 10-minute temporary seat hold with Redis TTL keys (`hold:show:{id}:seat:{id}`)
   - [x] RFC-7807 Problem Details error handling with fast 409 conflict responses
   - [x] RESTful API endpoints (`GET /seats`, `POST /hold`, `POST /release`) with 14 passing automated tests
-- [ ] **Phase 4: Transactional Checkout & Payment Idempotency Engine**
-  - [ ] HTTP `Idempotency-Key` tracking filter & Redis cache
-  - [ ] Simulated bank payment service with latency & failure simulation
-  - [ ] Atomic PostgreSQL `@Transactional` commit transitioning seats from `HELD` $\rightarrow$ `BOOKED`
+- [x] **Phase 4: Transactional Checkout & Payment Idempotency Engine**
+  - [x] HTTP `Idempotency-Key` tracking gate & Redis cache (120s `IN_PROGRESS` lock & 24h `COMPLETED` replay)
+  - [x] Simulated bank payment service with latency & failure simulation (`PaymentService`)
+  - [x] Decoupled transactional architecture preventing HikariCP pool starvation during payment calls
+  - [x] Atomic PostgreSQL `@Transactional` commit transitioning seats from `HELD` $\rightarrow$ `BOOKED`
+  - [x] RESTful checkout & booking lookup endpoints (`POST /bookings/checkout`, `GET /bookings/{ref}`) with 40 passing tests
 - [ ] **Phase 5: Auto-Expiration & Inventory Recovery**
   - [ ] Reactive Redis Keyspace Notification listener (`__keyevent@0__:expired`)
   - [ ] Proactive scheduled fallback sweep (`@Scheduled`) for orphaned holds
@@ -177,6 +179,59 @@ curl -X POST http://localhost:8080/api/v1/shows/1/release \
 
 ---
 
+## ⚡ API Showcase (Phase 4: Idempotent Checkout & Booking)
+
+### 4. Idempotent Checkout & Payment Finalization
+Converts a valid 10-minute hold into a confirmed booking. Replaying this request with the same `Idempotency-Key` returns the cached 201 response without re-charging:
+```bash
+curl -X POST http://localhost:8080/api/v1/bookings/checkout \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: c03264c1-4b16-43b6-9bb5-47e17cb2a609" \
+  -d '{
+    "userId": "usr_98124",
+    "holdReference": "a8098c1a-f86e-11da-bd1a-00112444be1e",
+    "paymentMethod": "UPI",
+    "paymentToken": "tok_mock_success_upi"
+  }'
+```
+**Response (201 Created):**
+```json
+{
+  "bookingReference": "TW-BK-A1B2C3D4",
+  "status": "CONFIRMED",
+  "showId": 1,
+  "userId": "usr_98124",
+  "paymentTxnId": "TXN_UPI_8A9B0C1D2E3F",
+  "totalAmount": 500.00,
+  "tickets": [
+    {
+      "ticketSerial": "TKT-2026-001A01",
+      "seatId": 1,
+      "row": "A",
+      "number": 1,
+      "tier": "VIP",
+      "price": 250.00
+    },
+    {
+      "ticketSerial": "TKT-2026-001A02",
+      "seatId": 2,
+      "row": "A",
+      "number": 2,
+      "tier": "VIP",
+      "price": 250.00
+    }
+  ],
+  "bookedAt": "2026-10-18T15:00:00Z"
+}
+```
+
+### 5. Retrieve Confirmed Booking Details
+```bash
+curl -X GET http://localhost:8080/api/v1/bookings/TW-BK-A1B2C3D4
+```
+
+---
+
 ## 🧪 Test Suite & Concurrency Verification
 
 TicketWave is built strictly following Test-Driven Development (TDD). 
@@ -184,8 +239,13 @@ TicketWave is built strictly following Test-Driven Development (TDD).
 ```bash
 mvn test
 ```
-* **Status:** `14 / 14 Tests Passing cleanly`
+* **Status:** `40 / 40 Tests Passing cleanly`
 * Covers:
+  - Idempotency key `IN_PROGRESS` lock & 24h `COMPLETED` replay caching
+  - Payment gateway simulation (deterministic tokens & bank decline 402)
+  - Hold lease expiration rejection (410 Gone)
+  - IDOR hold ownership verification
+  - Transactional boundary isolation preventing HikariCP pool starvation
   - Deterministic natural ordering & circular-wait deadlock prevention
   - Sub-millisecond fail-fast rejection on Redis conflicts (409)
   - Lock timeout handling under high thread contention

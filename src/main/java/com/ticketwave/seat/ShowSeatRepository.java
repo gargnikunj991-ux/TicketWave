@@ -23,5 +23,8 @@ public interface ShowSeatRepository extends JpaRepository<ShowSeat, Long> {
 
     List<ShowSeat> findByHoldReference(UUID holdReference);
 
+    @Query("SELECT ss FROM ShowSeat ss JOIN FETCH ss.seat JOIN FETCH ss.show WHERE ss.holdReference = :holdReference")
+    List<ShowSeat> findByHoldReferenceWithDetails(@Param("holdReference") UUID holdReference);
+
     List<ShowSeat> findByStatusAndHoldExpiresAtBefore(SeatStatus status, Instant expirationThreshold);
 }
