@@ -8,10 +8,13 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface ShowSeatRepository extends JpaRepository<ShowSeat, Long> {
+
+    Optional<ShowSeat> findByShowIdAndSeatId(Long showId, Long seatId);
 
     @Query("SELECT ss FROM ShowSeat ss JOIN FETCH ss.seat WHERE ss.show.id = :showId ORDER BY ss.seat.rowLabel ASC, ss.seat.seatNumber ASC")
     List<ShowSeat> findByShowIdWithSeatDetails(@Param("showId") Long showId);

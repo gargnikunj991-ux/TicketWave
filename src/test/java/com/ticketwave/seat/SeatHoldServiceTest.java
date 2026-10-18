@@ -203,6 +203,7 @@ class SeatHoldServiceTest {
         showSeat1.setHoldReference(holdRef);
 
         when(showSeatRepository.findByHoldReference(holdRef)).thenReturn(List.of(showSeat1));
+        when(stringRedisTemplate.hasKey("user_hold:usr_alice:" + holdRef)).thenReturn(true);
 
         HoldReleaseRequest request = HoldReleaseRequest.builder()
                 .userId("usr_alice")

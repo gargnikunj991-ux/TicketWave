@@ -121,8 +121,14 @@ public class SeatHoldService {
                 throw new ResourceNotFoundException("One or more requested seats do not exist for this show");
             }
 
+            Instant now = Instant.now();
             for (ShowSeat ss : showSeats) {
-                if (ss.getStatus() != SeatStatus.AVAILABLE) {
+                boolean isExpiredZombieHold = ss.getStatus() == SeatStatus.HELD
+                        && ss.getHoldExpiresAt() != null
+                        && ss.getHoldExpiresAt().isBefore(now)
+                        && !Boolean.TRUE.equals(stringRedisTemplate.hasKey("hold:show:" + showId + ":seat:" + ss.getSeat().getId()));
+
+                if (ss.getStatus() != SeatStatus.AVAILABLE && !isExpiredZombieHold) {
                     throw new SeatHoldConflictException(
                             "Seat " + ss.getSeat().getRowLabel() + ss.getSeat().getSeatNumber() +
                             " is currently " + ss.getStatus()
@@ -189,13 +195,23 @@ public class SeatHoldService {
             throw new ResourceNotFoundException("No active hold found for reference: " + request.getHoldReference());
         }
 
+        // Cross-Show Validation
+        if (!heldSeats.get(0).getShow().getId().equals(showId)) {
+            throw new ResourceNotFoundException("Hold " + request.getHoldReference() + " does not belong to show: " + showId);
+        }
+
+        // Ownership / IDOR Validation
+        String userHoldKey = "user_hold:" + request.getUserId() + ":" + request.getHoldReference();
+        if (!Boolean.TRUE.equals(stringRedisTemplate.hasKey(userHoldKey))) {
+            throw new SecurityException("User [" + request.getUserId() + "] is not authorized to release hold [" + request.getHoldReference() + "]");
+        }
+
         // 1. Delete Redis Hold Keys
         for (ShowSeat ss : heldSeats) {
             String holdKey = "hold:show:" + showId + ":seat:" + ss.getSeat().getId();
             stringRedisTemplate.delete(holdKey);
         }
 
-        String userHoldKey = "user_hold:" + request.getUserId() + ":" + request.getHoldReference();
         stringRedisTemplate.delete(userHoldKey);
 
         // 2. Revert PostgreSQL ShowSeats to AVAILABLE

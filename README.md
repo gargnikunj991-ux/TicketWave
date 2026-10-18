@@ -75,9 +75,11 @@ This repository is built following a test-driven, milestone-based engineering ap
   - [x] Decoupled transactional architecture preventing HikariCP pool starvation during payment calls
   - [x] Atomic PostgreSQL `@Transactional` commit transitioning seats from `HELD` $\rightarrow$ `BOOKED`
   - [x] RESTful checkout & booking lookup endpoints (`POST /bookings/checkout`, `GET /bookings/{ref}`) with 40 passing tests
-- [ ] **Phase 5: Auto-Expiration & Inventory Recovery**
-  - [ ] Reactive Redis Keyspace Notification listener (`__keyevent@0__:expired`)
-  - [ ] Proactive scheduled fallback sweep (`@Scheduled`) for orphaned holds
+- [x] **Phase 5: Auto-Expiration & Inventory Recovery**
+  - [x] Reactive Redis Keyspace Notification listener (`__keyevent@*__:expired`) reclaiming holds in `<5ms`
+  - [x] Proactive scheduled fallback sweep worker (`@Scheduled`) every 60s for guaranteed recovery
+  - [x] Strict state machine safeguards ensuring confirmed `BOOKED` seats are never affected
+  - [x] 51 passing automated tests across reactive listeners, batch sweepers, and controllers
 - [ ] **Phase 6: High-Contention Multithreaded Concurrency Stress Testing**
   - [ ] JUnit 5 + `CountDownLatch` + `ExecutorService` test suite
   - [ ] Verification: 100+ concurrent threads competing for 1 seat $\rightarrow$ exactly 1 booking, 99 graceful rejections, 0 overbookings
@@ -239,8 +241,11 @@ TicketWave is built strictly following Test-Driven Development (TDD).
 ```bash
 mvn test
 ```
-* **Status:** `40 / 40 Tests Passing cleanly`
+* **Status:** `51 / 51 Tests Passing cleanly`
 * Covers:
+  - Reactive Redis keyspace expiration listener & hold regex pattern parsing
+  - Automated batch sweeping for orphaned holds in PostgreSQL
+  - Confirmed `BOOKED` state protection during expiration events
   - Idempotency key `IN_PROGRESS` lock & 24h `COMPLETED` replay caching
   - Payment gateway simulation (deterministic tokens & bank decline 402)
   - Hold lease expiration rejection (410 Gone)

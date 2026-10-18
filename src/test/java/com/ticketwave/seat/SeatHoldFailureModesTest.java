@@ -47,7 +47,6 @@ import static org.mockito.Mockito.*;
  * 3. Cross-Show Leak: Releasing a hold under the wrong show ID modifies foreign show seats.
  */
 @ExtendWith(MockitoExtension.class)
-@org.junit.jupiter.api.Disabled("Illustrative demonstration of Phase 3 failure modes addressed in Phase 4 and 5")
 class SeatHoldFailureModesTest {
 
     @Mock
