@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import com.ticketwave.infrastructure.metrics.TicketWaveMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,7 +23,6 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class SeatHoldService {
 
@@ -33,6 +34,29 @@ public class SeatHoldService {
     private final StringRedisTemplate stringRedisTemplate;
     private final ShowSeatRepository showSeatRepository;
     private final ShowRepository showRepository;
+    private final TicketWaveMetrics metrics;
+
+    public SeatHoldService(
+            RedissonClient redissonClient,
+            StringRedisTemplate stringRedisTemplate,
+            ShowSeatRepository showSeatRepository,
+            ShowRepository showRepository) {
+        this(redissonClient, stringRedisTemplate, showSeatRepository, showRepository, null);
+    }
+
+    @Autowired
+    public SeatHoldService(
+            RedissonClient redissonClient,
+            StringRedisTemplate stringRedisTemplate,
+            ShowSeatRepository showSeatRepository,
+            ShowRepository showRepository,
+            @Autowired(required = false) TicketWaveMetrics metrics) {
+        this.redissonClient = redissonClient;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.showSeatRepository = showSeatRepository;
+        this.showRepository = showRepository;
+        this.metrics = metrics != null ? metrics : TicketWaveMetrics.noop();
+    }
 
     /**
      * 🎫 Retrieves real-time seat matrix for a given show.
@@ -76,6 +100,9 @@ public class SeatHoldService {
      */
     @Transactional
     public SeatHoldResponse acquireSeatHold(Long showId, SeatHoldRequest request) {
+        long startNanos = System.nanoTime();
+        metrics.recordHoldAttempt();
+
         // Validate Show
         Show show = showRepository.findById(showId)
                 .orElseThrow(() -> new ResourceNotFoundException("Show not found with id: " + showId));
@@ -98,11 +125,13 @@ public class SeatHoldService {
             acquired = multiLock.tryLock(LOCK_WAIT_MS, LOCK_LEASE_MS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            metrics.recordHoldLockTimeout();
             throw new LockAcquisitionException("Interrupted while waiting for seat locks for show: " + showId);
         }
 
         if (!acquired) {
             log.warn("Lock contention timeout on show [{}] for seats {}", showId, sortedSeatIds);
+            metrics.recordHoldLockTimeout();
             throw new LockAcquisitionException("Unable to acquire lock on requested seats. High contention. Please try again.");
         }
 
@@ -111,6 +140,7 @@ public class SeatHoldService {
             for (Long seatId : sortedSeatIds) {
                 String holdKey = "hold:show:" + showId + ":seat:" + seatId;
                 if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(holdKey))) {
+                    metrics.recordHoldConflict();
                     throw new SeatHoldConflictException("Seat " + seatId + " is currently held by another user");
                 }
             }
@@ -129,6 +159,7 @@ public class SeatHoldService {
                         && !Boolean.TRUE.equals(stringRedisTemplate.hasKey("hold:show:" + showId + ":seat:" + ss.getSeat().getId()));
 
                 if (ss.getStatus() != SeatStatus.AVAILABLE && !isExpiredZombieHold) {
+                    metrics.recordHoldConflict();
                     throw new SeatHoldConflictException(
                             "Seat " + ss.getSeat().getRowLabel() + ss.getSeat().getSeatNumber() +
                             " is currently " + ss.getStatus()
@@ -163,6 +194,8 @@ public class SeatHoldService {
                 ss.setHoldExpiresAt(expiresAt);
             }
             showSeatRepository.saveAll(showSeats);
+
+            metrics.recordHoldSuccess(Duration.ofNanos(System.nanoTime() - startNanos));
 
             log.info("Successfully acquired hold [{}] for user [{}] on show [{}] for seats {}",
                     holdReference, request.getUserId(), showId, sortedSeatIds);

@@ -2,8 +2,11 @@ package com.ticketwave.booking;
 
 import com.ticketwave.booking.dto.CheckoutRequest;
 import com.ticketwave.booking.dto.CheckoutResponse;
+import com.ticketwave.infrastructure.exception.ErrorResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -26,10 +29,14 @@ public class BookingController {
             description = "Executes payment verification and converts a valid seat hold into a permanent booking. Protected by Redis idempotency."
     )
     @ApiResponse(responseCode = "201", description = "Booking created and confirmed successfully")
-    @ApiResponse(responseCode = "400", description = "Invalid request payload or missing idempotency header")
-    @ApiResponse(responseCode = "402", description = "Simulated payment declined by bank")
-    @ApiResponse(responseCode = "409", description = "Concurrent checkout with identical idempotency key already in progress")
-    @ApiResponse(responseCode = "410", description = "Seat hold has expired and seats returned to inventory")
+    @ApiResponse(responseCode = "400", description = "Invalid request payload or missing idempotency header",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "402", description = "Simulated payment declined by bank",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "409", description = "Concurrent checkout with identical idempotency key already in progress",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "410", description = "Seat hold has expired and seats returned to inventory",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<CheckoutResponse> checkout(
             @Parameter(description = "Client-generated unique UUID to ensure payment idempotency", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,

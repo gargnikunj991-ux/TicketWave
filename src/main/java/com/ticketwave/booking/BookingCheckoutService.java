@@ -13,18 +13,20 @@ import com.ticketwave.seat.ShowSeat;
 import com.ticketwave.seat.ShowSeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.ticketwave.infrastructure.metrics.TicketWaveMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class BookingCheckoutService {
 
@@ -34,6 +36,35 @@ public class BookingCheckoutService {
     private final BookingRepository bookingRepository;
     private final ShowSeatRepository showSeatRepository;
     private final StringRedisTemplate stringRedisTemplate;
+    private final TicketWaveMetrics metrics;
+
+    public BookingCheckoutService(
+            IdempotencyService idempotencyService,
+            PaymentService paymentService,
+            BookingPersistenceService bookingPersistenceService,
+            BookingRepository bookingRepository,
+            ShowSeatRepository showSeatRepository,
+            StringRedisTemplate stringRedisTemplate) {
+        this(idempotencyService, paymentService, bookingPersistenceService, bookingRepository, showSeatRepository, stringRedisTemplate, null);
+    }
+
+    @Autowired
+    public BookingCheckoutService(
+            IdempotencyService idempotencyService,
+            PaymentService paymentService,
+            BookingPersistenceService bookingPersistenceService,
+            BookingRepository bookingRepository,
+            ShowSeatRepository showSeatRepository,
+            StringRedisTemplate stringRedisTemplate,
+            @Autowired(required = false) TicketWaveMetrics metrics) {
+        this.idempotencyService = idempotencyService;
+        this.paymentService = paymentService;
+        this.bookingPersistenceService = bookingPersistenceService;
+        this.bookingRepository = bookingRepository;
+        this.showSeatRepository = showSeatRepository;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.metrics = metrics != null ? metrics : TicketWaveMetrics.noop();
+    }
 
     /**
      * Executes idempotent checkout:
@@ -44,44 +75,71 @@ public class BookingCheckoutService {
      * 5. Evicts Redis hold keys and caches completed response for 24 hours.
      */
     public CheckoutResponse checkout(String idempotencyKey, CheckoutRequest request) {
+        long startNanos = System.nanoTime();
+        metrics.recordCheckoutAttempt();
+
         log.info("Initiating checkout for user [{}] with hold [{}] and idempotency key [{}]",
                 request.getUserId(), request.getHoldReference(), idempotencyKey);
 
         // 1. Idempotency Gate (Redis SETNX)
         Optional<CheckoutResponse> cached = idempotencyService.acquireOrGetCached(idempotencyKey);
         if (cached.isPresent()) {
+            metrics.recordIdempotentReplay();
             return cached.get();
         }
 
+        // 2. Hold-Level Concurrency Gate (Redis SETNX on holdReference)
+        // Prevents two concurrent requests (even with different idempotency keys) from charging payment simultaneously for the same hold.
+        String holdCheckoutLockKey = "lock:checkout:hold:" + request.getHoldReference();
+        Boolean holdLockAcquired = null;
         try {
-            // 2. Validate Hold Lease in DB and Redis
+            holdLockAcquired = stringRedisTemplate.opsForValue()
+                    .setIfAbsent(holdCheckoutLockKey, idempotencyKey, Duration.ofSeconds(60));
+        } catch (Exception ignored) {}
+
+        if (Boolean.FALSE.equals(holdLockAcquired)) {
+            log.warn("Concurrent checkout attempt detected for hold reference [{}]", request.getHoldReference());
+            throw new com.ticketwave.infrastructure.exception.IdempotencyConflictException(
+                    "A checkout transaction for hold '" + request.getHoldReference() + "' is already in progress."
+            );
+        }
+
+        try {
+            // 3. Validate Hold Lease in DB and Redis
             List<ShowSeat> showSeats = validateAndGetHeldSeats(request.getHoldReference(), request.getUserId());
 
             BigDecimal totalAmount = showSeats.stream()
                     .map(ShowSeat::getPrice)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            // 3. Process Payment (Outside DB @Transactional boundary to prevent HikariCP starvation)
+            // 4. Process Payment (Outside DB @Transactional boundary to prevent HikariCP starvation)
             PaymentResult paymentResult = paymentService.processPayment(
                     request.getUserId(), totalAmount, request.getPaymentMethod(), request.getPaymentToken()
             );
 
-            // 4. Atomic PostgreSQL Commit
+            // 5. Atomic PostgreSQL Commit
             CheckoutResponse response = bookingPersistenceService.commitBooking(
                     showSeats, request, totalAmount, paymentResult.getTransactionId(), idempotencyKey
             );
 
-            // 5. Post-Commit Redis Hold Invalidation & Idempotency Cache Update
+            // 6. Post-Commit Redis Hold Invalidation & Idempotency Cache Update
             Long showId = showSeats.get(0).getShow().getId();
             cleanupRedisHolds(showId, request.getUserId(), request.getHoldReference(), showSeats);
+            stringRedisTemplate.delete(holdCheckoutLockKey);
             idempotencyService.markCompleted(idempotencyKey, response);
 
+            metrics.recordCheckoutSuccess(Duration.ofNanos(System.nanoTime() - startNanos));
             return response;
 
         } catch (Exception ex) {
-            // If payment or hold validation fails, release in-progress idempotency lock so user can retry
-            log.warn("Checkout failed for idempotency key [{}]: {}. Releasing lock.", idempotencyKey, ex.getMessage());
-            idempotencyService.releaseLock(idempotencyKey);
+            metrics.recordCheckoutFailure();
+            stringRedisTemplate.delete(holdCheckoutLockKey);
+            // If payment or hold validation fails, release in-progress idempotency lock so user can retry.
+            // Note: If the failure is IdempotencyConflictException, another thread holds the lock and we MUST NOT release it!
+            if (!(ex instanceof com.ticketwave.infrastructure.exception.IdempotencyConflictException)) {
+                log.warn("Checkout failed for idempotency key [{}]: {}. Releasing lock.", idempotencyKey, ex.getMessage());
+                idempotencyService.releaseLock(idempotencyKey);
+            }
             throw ex;
         }
     }

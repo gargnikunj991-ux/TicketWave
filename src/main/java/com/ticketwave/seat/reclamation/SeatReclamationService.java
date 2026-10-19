@@ -5,6 +5,8 @@ import com.ticketwave.seat.ShowSeat;
 import com.ticketwave.seat.ShowSeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.ticketwave.infrastructure.metrics.TicketWaveMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,11 +15,23 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class SeatReclamationService {
 
     private final ShowSeatRepository showSeatRepository;
+    private final TicketWaveMetrics metrics;
+
+    public SeatReclamationService(ShowSeatRepository showSeatRepository) {
+        this(showSeatRepository, null);
+    }
+
+    @Autowired
+    public SeatReclamationService(
+            ShowSeatRepository showSeatRepository,
+            @Autowired(required = false) TicketWaveMetrics metrics) {
+        this.showSeatRepository = showSeatRepository;
+        this.metrics = metrics != null ? metrics : TicketWaveMetrics.noop();
+    }
 
     /**
      * Tier 1 (Reactive): Reclaims a single seat when its Redis hold key expires.
@@ -45,6 +59,7 @@ public class SeatReclamationService {
             ss.setHoldReference(null);
             ss.setHoldExpiresAt(null);
             showSeatRepository.save(ss);
+            metrics.recordReactiveSweep();
             log.info("Successfully reclaimed expired hold on show [{}] seat [{}] -> reset to AVAILABLE pool", showId, seatId);
             return true;
         }
@@ -72,6 +87,7 @@ public class SeatReclamationService {
         }
 
         showSeatRepository.saveAll(expiredHolds);
+        metrics.recordScheduledSweep(expiredHolds.size());
         log.info("Sweeper reclaimed [{}] orphaned seat holds whose TTL expired in PostgreSQL", expiredHolds.size());
         return expiredHolds.size();
     }

@@ -104,6 +104,9 @@ class BookingCheckoutServiceTest {
                 .holdReference(holdReference)
                 .holdExpiresAt(Instant.now().plusSeconds(300))
                 .build();
+
+        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.setIfAbsent(anyString(), anyString(), any(java.time.Duration.class))).thenReturn(true);
     }
 
     @Test
